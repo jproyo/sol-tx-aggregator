@@ -1,0 +1,23 @@
+[package]
+name = "sol-tx-aggregator"
+version = "0.1.0"
+edition = "2021"
+authors = ["Juan Royo Sales <juanpablo.royo@gmail.com>"]
+description = "Solana transaction aggregator example"
+
+[dependencies]
+tokio = { version = "1.28", features = ["full"] }
+solana-sdk = "1.16"
+solana-client = "1.16"
+solana-transaction-status = "1.16"
+chrono = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+axum = "0.6"
+tower-http = { version = "0.4", features = ["cors"] }
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[dev-dependencies]
+tokio-test = "0.4"
