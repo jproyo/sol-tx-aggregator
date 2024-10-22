@@ -15,6 +15,7 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         if let Err(e) = aggregator.run().await {
             tracing::error!("Aggregator error: {:?}", e);
+            std::process::exit(1);
         }
     });
 
