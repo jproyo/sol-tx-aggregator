@@ -10,9 +10,9 @@ pub async fn start_server() -> anyhow::Result<()> {
         .route("/accounts", get(get_accounts))
         .layer(CorsLayer::permissive());
 
-    axum::Server::bind(&"0.0.0.0:3000".parse()?)
-        .serve(app.into_make_service())
-        .await?;
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+
+    axum::serve(listener, app).await?;
 
     Ok(())
 }
