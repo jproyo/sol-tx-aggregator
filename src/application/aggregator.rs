@@ -3,41 +3,39 @@ use crate::domain::{
     errors::AggregatorError,
     models::{Account, Notifier, Transaction},
 };
-use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcBlockConfig};
+use crate::infrastructure::bc_client::BcClient;
+use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
     commitment_config::CommitmentConfig, instruction::CompiledInstruction, pubkey::Pubkey,
     system_instruction::SystemInstruction, transaction::VersionedTransaction,
 };
-use solana_transaction_status::{
-    TransactionDetails, UiConfirmedBlock, UiTransactionEncoding, UiTransactionStatusMeta,
-};
+use solana_transaction_status::UiTransactionStatusMeta;
 use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::task::JoinSet;
-use tokio_retry::{
-    strategy::{jitter, ExponentialBackoff},
-    Retry,
-};
+use typed_builder::TypedBuilder;
 
-#[derive(Clone)]
-pub struct SolanaAggregator<N> {
-    client: Arc<RpcClient>,
+#[derive(Clone, TypedBuilder)]
+pub struct SolanaAggregator<C, N> {
+    bc_client: C,
     notifier: N,
 }
 
 #[async_trait::async_trait]
-impl<N> Aggregator for SolanaAggregator<N>
+impl<C, N> Aggregator for SolanaAggregator<C, N>
 where
+    C: BcClient + Send + Sync + 'static + Clone,
     N: Notifier + Send + Sync + 'static + Clone,
 {
     async fn run(&self) -> Result<(), AggregatorError> {
-        let mut last_processed_slot = self.get_current_slot().await?;
+        let mut last_processed_slot = self.bc_client.get_current_slot().await?;
 
         loop {
-            let current_slot = self.get_current_slot().await?;
+            let current_slot = self.bc_client.get_current_slot().await?;
             let blocks = self
+                .bc_client
                 .get_blocks(last_processed_slot + 1, current_slot)
                 .await?;
 
@@ -75,86 +73,31 @@ where
 
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
-
-        Ok(())
     }
 }
 
-impl<N: Notifier> SolanaAggregator<N> {
-    pub async fn new(notifier: N, endpoint: String) -> Result<Self, AggregatorError> {
-        let client = Arc::new(RpcClient::new_with_commitment(
-            endpoint.to_string(),
-            CommitmentConfig::confirmed(),
-        ));
-        //let (tx_sender, mut tx_receiver) = mpsc::channel::<Transaction>(1000);
-        //let (account_sender, mut account_receiver) = mpsc::channel::<Account>(1000);
+impl<C: BcClient, N: Notifier> SolanaAggregator<C, N> {
+    //let (tx_sender, mut tx_receiver) = mpsc::channel::<Transaction>(1000);
+    //let (account_sender, mut account_receiver) = mpsc::channel::<Account>(1000);
 
-        // Spawn a task to handle transactions
-        //tokio::spawn(async move {
-        //    while let Some(transaction) = tx_receiver.recv().await {
-        //        // Process the transaction
-        //        println!("Received transaction: {}", transaction.id);
-        //    }
-        //});
+    // Spawn a task to handle transactions
+    //tokio::spawn(async move {
+    //    while let Some(transaction) = tx_receiver.recv().await {
+    //        // Process the transaction
+    //        println!("Received transaction: {}", transaction.id);
+    //    }
+    //});
 
-        // Spawn a task to handle account updates
-        //tokio::spawn(async move {
-        //    while let Some(account) = account_receiver.recv().await {
-        //        // Process the account update
-        //        println!("Received account update: {}", account.address);
-        //    }
-        //});
-
-        Ok(Self { client, notifier })
-    }
-
-    async fn get_current_slot(&self) -> Result<u64, AggregatorError> {
-        let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
-
-        let result = Retry::spawn(retry_strategy, || self.client.get_slot()).await?;
-        Ok(result)
-    }
-
-    async fn get_blocks(
-        &self,
-        start_slot: u64,
-        end_slot: u64,
-    ) -> Result<Vec<u64>, AggregatorError> {
-        let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
-
-        let result = Retry::spawn(retry_strategy, || {
-            self.client.get_blocks_with_commitment(
-                start_slot,
-                Some(end_slot),
-                CommitmentConfig::confirmed(),
-            )
-        })
-        .await?;
-        Ok(result)
-    }
-
-    async fn get_block(&self, slot: u64) -> Result<UiConfirmedBlock, AggregatorError> {
-        let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
-
-        let result = Retry::spawn(retry_strategy, || {
-            self.client.get_block_with_config(
-                slot,
-                RpcBlockConfig {
-                    transaction_details: Some(TransactionDetails::Full),
-                    encoding: Some(UiTransactionEncoding::Base64),
-                    rewards: Some(false),
-                    commitment: Some(CommitmentConfig::confirmed()),
-                    max_supported_transaction_version: Some(0),
-                    ..Default::default()
-                },
-            )
-        })
-        .await?;
-        Ok(result)
-    }
+    // Spawn a task to handle account updates
+    //tokio::spawn(async move {
+    //    while let Some(account) = account_receiver.recv().await {
+    //        // Process the account update
+    //        println!("Received account update: {}", account.address);
+    //    }
+    //});
 
     async fn process_block(&self, slot: u64) -> Result<(), AggregatorError> {
-        let block = self.get_block(slot).await?;
+        let block = self.bc_client.get_block(slot).await?;
 
         if let Some(txs) = block.transactions {
             for tx in txs {
@@ -179,11 +122,7 @@ impl<N: Notifier> SolanaAggregator<N> {
                                         )
                                         .await?;
                                     }
-                                    SystemInstruction::CreateAccount {
-                                        lamports,
-                                        space: _,
-                                        owner,
-                                    } => {
+                                    SystemInstruction::CreateAccount { lamports, .. } => {
                                         self.process_create_account(
                                             &instruction,
                                             &account_keys,

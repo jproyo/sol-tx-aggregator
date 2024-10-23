@@ -1,4 +1,7 @@
+use aggregator::SolanaAggregator;
+
 use crate::domain::errors::AggregatorError;
+use crate::infrastructure::solana_client::SolanaClient;
 
 pub mod aggregator;
 /// The `Aggregator` trait defines the core functionality for transaction aggregation.
@@ -31,4 +34,13 @@ pub mod aggregator;
 #[async_trait::async_trait]
 pub trait Aggregator {
     async fn run(&self) -> Result<(), AggregatorError>;
+}
+
+pub fn app(endpoint: &str) -> Result<impl Aggregator, AggregatorError> {
+    let bc_client = SolanaClient::from_url(endpoint);
+    let aggregator = SolanaAggregator::builder()
+        .bc_client(bc_client)
+        .notifier(Notifier::new())
+        .build();
+    Ok(aggregator)
 }
