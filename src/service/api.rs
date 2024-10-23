@@ -16,6 +16,16 @@ use std::{str::FromStr, sync::Arc};
 use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 
+/// Starts the API server.
+///
+/// # Arguments
+///
+/// * `shutdown` - A broadcast channel sender for shutting down the server.
+/// * `app` - The application state, wrapped in an Arc.
+///
+/// # Returns
+///
+/// Returns `Ok(())` if the server starts and shuts down successfully, or an error otherwise.
 pub async fn start_server(
     shutdown: broadcast::Sender<()>,
     app: Arc<impl Application + Send + Sync + 'static>,
@@ -46,6 +56,7 @@ pub async fn start_server(
     Ok(())
 }
 
+/// Represents the query parameters for transaction requests.
 #[derive(Deserialize)]
 struct TransactionQuery {
     id: Option<String>,
@@ -55,11 +66,15 @@ struct TransactionQuery {
     slot: Option<u64>,
 }
 
+/// Represents the query parameters for account requests.
 #[derive(Deserialize)]
 struct AccountQuery {
     address: Option<String>,
 }
 
+/// Handles GET requests for transactions.
+///
+/// This function routes the request to the appropriate handler based on the query parameters.
 async fn get_transactions(
     State(app_state): State<Arc<impl Application>>,
     Query(params): Query<TransactionQuery>,
@@ -87,6 +102,7 @@ async fn get_transactions(
     get_all_transactions(&app_state).await
 }
 
+/// Retrieves transactions by sender.
 async fn get_transactions_by_sender(
     sender: String,
     app_state: &Arc<impl Application>,
@@ -99,6 +115,7 @@ async fn get_transactions_by_sender(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+/// Retrieves transactions by receiver.
 async fn get_transactions_by_receiver(
     receiver: String,
     app_state: &Arc<impl Application>,
@@ -111,6 +128,7 @@ async fn get_transactions_by_receiver(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+/// Retrieves transactions by slot.
 async fn get_transactions_by_slot(
     slot: u64,
     app_state: &Arc<impl Application>,
@@ -122,6 +140,7 @@ async fn get_transactions_by_slot(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+/// Retrieves all transactions.
 async fn get_all_transactions(
     app_state: &Arc<impl Application>,
 ) -> Result<Json<Vec<Transaction>>, StatusCode> {
@@ -132,6 +151,7 @@ async fn get_all_transactions(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+/// Retrieves transactions by date.
 async fn get_transactions_by_date(
     day: String,
     app_state: &Arc<impl Application>,
@@ -144,6 +164,7 @@ async fn get_transactions_by_date(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+/// Retrieves a transaction by its ID.
 async fn get_transaction_by_id(
     app_state: &Arc<impl Application>,
     id: String,
@@ -156,6 +177,10 @@ async fn get_transaction_by_id(
         .map_err(|_| StatusCode::NOT_FOUND)
 }
 
+/// Handles GET requests for accounts.
+///
+/// If an address is provided, it returns the specific account.
+/// Otherwise, it returns all accounts.
 async fn get_accounts(
     State(app_state): State<Arc<impl Application>>,
     Query(params): Query<AccountQuery>,

@@ -1,3 +1,4 @@
+/// Module for the Solana blockchain aggregator implementation.
 use super::Aggregator;
 use crate::infrastructure::bc_client::BcClient;
 use crate::{
@@ -16,10 +17,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinSet;
 use typed_builder::TypedBuilder;
 
+/// Struct representing the Solana blockchain aggregator.
 #[derive(Clone, TypedBuilder)]
 pub struct SolanaAggregator<C, N, S> {
+    /// The blockchain client used to interact with the Solana network.
     bc_client: C,
+    /// The notifier used to send updates about transactions and accounts.
     notifier: N,
+    /// The shutdown mechanism for gracefully stopping the aggregator.
     shutdown: S,
 }
 
@@ -30,6 +35,7 @@ where
     N: Notifier + Send + Sync + 'static + Clone,
     S: Shutdown + Send + Sync + 'static,
 {
+    /// Runs the Solana aggregator, processing blocks and notifying about transactions and account updates.
     async fn run(self) -> Result<(), AggregatorError> {
         let mut last_processed_slot = self.bc_client.get_current_slot().await?;
         let mut shutdown = self.shutdown.subscribe();
@@ -91,6 +97,7 @@ where
     }
 }
 
+/// Struct containing details of a transaction to be processed.
 struct TransactionDetails<'a> {
     tx_id: &'a str,
     instruction: &'a CompiledInstruction,
@@ -102,6 +109,7 @@ struct TransactionDetails<'a> {
 }
 
 impl<'a> TransactionDetails<'a> {
+    /// Converts the transaction details into a Transaction struct.
     fn into_transaction(self) -> Transaction {
         let instruction = self.instruction;
         let account_keys = self.account_keys;
@@ -137,6 +145,7 @@ where
     C: BcClient,
     N: Notifier + Clone,
 {
+    /// Processes a single block, extracting and notifying about transactions and account updates.
     async fn process_block(bc_client: C, notifier: N, slot: u64) -> Result<(), AggregatorError> {
         let block = bc_client.get_block(slot).await?;
 
@@ -188,6 +197,7 @@ where
         Ok(())
     }
 
+    /// Processes a create account instruction, notifying about the new account.
     async fn process_create_account(
         notifier: N,
         instruction: &CompiledInstruction,
@@ -207,6 +217,7 @@ where
         Ok(())
     }
 
+    /// Updates account balances based on the transaction metadata.
     async fn update_account_balances(
         notifier: N,
         account_keys: &[Pubkey],
@@ -233,6 +244,7 @@ where
         Ok(())
     }
 
+    /// Extracts transfer details from a versioned transaction.
     fn get_transfer_details(
         transaction: &VersionedTransaction,
     ) -> (Vec<CompiledInstruction>, Vec<Pubkey>) {

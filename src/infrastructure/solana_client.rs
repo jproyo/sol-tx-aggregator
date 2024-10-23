@@ -11,12 +11,22 @@ use crate::domain::errors::BcClientError;
 
 use super::bc_client::BcClient;
 
+/// A client for interacting with the Solana blockchain.
 #[derive(Clone)]
 pub struct SolanaClient {
     rpc_client: Arc<RpcClient>,
 }
 
 impl SolanaClient {
+    /// Creates a new `SolanaClient` instance from the given RPC URL.
+    ///
+    /// # Arguments
+    ///
+    /// * `rpc_url` - The URL of the Solana RPC endpoint.
+    ///
+    /// # Returns
+    ///
+    /// A new `SolanaClient` instance.
     pub fn from_url(rpc_url: &str) -> Self {
         Self {
             rpc_client: Arc::new(RpcClient::new_with_commitment(
@@ -29,6 +39,11 @@ impl SolanaClient {
 
 #[async_trait::async_trait]
 impl BcClient for SolanaClient {
+    /// Retrieves the current slot number from the Solana blockchain.
+    ///
+    /// # Returns
+    ///
+    /// The current slot number as a `u64`, or a `BcClientError` if the operation fails.
     async fn get_current_slot(&self) -> Result<u64, BcClientError> {
         let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
 
@@ -38,6 +53,16 @@ impl BcClient for SolanaClient {
         Ok(result)
     }
 
+    /// Retrieves a range of block numbers from the Solana blockchain.
+    ///
+    /// # Arguments
+    ///
+    /// * `start_slot` - The starting slot number.
+    /// * `end_slot` - The ending slot number.
+    ///
+    /// # Returns
+    ///
+    /// A vector of block numbers (slots) within the specified range, or a `BcClientError` if the operation fails.
     async fn get_blocks(&self, start_slot: u64, end_slot: u64) -> Result<Vec<u64>, BcClientError> {
         let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
 
@@ -53,6 +78,16 @@ impl BcClient for SolanaClient {
         Ok(result)
     }
 
+    /// Retrieves detailed information about a specific block from the Solana blockchain.
+    ///
+    /// # Arguments
+    ///
+    /// * `slot` - The slot number of the block to retrieve.
+    ///
+    /// # Returns
+    ///
+    /// A `UiConfirmedBlock` containing detailed information about the requested block,
+    /// or a `BcClientError` if the operation fails.
     async fn get_block(&self, slot: u64) -> Result<UiConfirmedBlock, BcClientError> {
         let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
 
