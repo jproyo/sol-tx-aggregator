@@ -1,105 +1,195 @@
 use crate::models::{Account, Transaction};
-use anyhow::Result;
-use solana_client::{
-    nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient},
-    rpc_config::{RpcBlockConfig, RpcBlockSubscribeConfig, RpcBlockSubscribeFilter},
-};
+use anyhow::{Context, Result};
+use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcBlockConfig};
 use solana_sdk::{
-    commitment_config::CommitmentConfig, pubkey::Pubkey, system_instruction::SystemInstruction,
-    transaction::VersionedTransaction,
+    commitment_config::CommitmentConfig, instruction::CompiledInstruction, pubkey::Pubkey,
+    system_instruction::SystemInstruction, transaction::VersionedTransaction,
 };
 use solana_transaction_status::{
-    EncodedConfirmedBlock, EncodedTransactionWithStatusMeta, TransactionDetails, UiConfirmedBlock,
-    UiTransactionEncoding,
+    EncodedTransactionWithStatusMeta, TransactionDetails, UiConfirmedBlock, UiTransactionEncoding,
+    UiTransactionStatusMeta,
 };
-use std::{str::FromStr, sync::Arc};
-use tokio::sync::RwLock;
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+use tokio::{sync::mpsc, task::JoinSet};
+use tokio_retry::{
+    strategy::{jitter, ExponentialBackoff},
+    Retry,
+};
 
+#[derive(Clone)]
 pub struct Aggregator {
-    transactions: Arc<RwLock<Vec<Transaction>>>,
-    accounts: Arc<RwLock<Vec<Account>>>,
-    client: RpcClient,
+    client: Arc<RpcClient>,
+    tx_sender: mpsc::Sender<Transaction>,
+    account_sender: mpsc::Sender<Account>,
 }
 
 impl Aggregator {
     pub async fn new() -> Result<Self> {
         let endpoint =
-            "https://devnet.helius-rpc.com/?api-key=883a58ea-8640-456c-ad09-802120787faf"
-                .to_string();
-        let client = RpcClient::new(endpoint);
+            "https://devnet.helius-rpc.com/?api-key=883a58ea-8640-456c-ad09-802120787faf";
+        let client = Arc::new(RpcClient::new_with_commitment(
+            endpoint.to_string(),
+            CommitmentConfig::confirmed(),
+        ));
+        let (tx_sender, mut tx_receiver) = mpsc::channel::<Transaction>(1000);
+        let (account_sender, mut account_receiver) = mpsc::channel::<Account>(1000);
+
+        // Spawn a task to handle transactions
+        tokio::spawn(async move {
+            while let Some(transaction) = tx_receiver.recv().await {
+                // Process the transaction
+                println!("Received transaction: {}", transaction.id);
+            }
+        });
+
+        // Spawn a task to handle account updates
+        tokio::spawn(async move {
+            while let Some(account) = account_receiver.recv().await {
+                // Process the account update
+                println!("Received account update: {}", account.address);
+            }
+        });
+
         Ok(Self {
             client,
-            transactions: Arc::new(RwLock::new(Vec::new())),
-            accounts: Arc::new(RwLock::new(Vec::new())),
+            tx_sender,
+            account_sender,
         })
     }
-    pub async fn run(&self) -> Result<()> {
-        tracing::info!("Subscribing to blocks");
-        let slot = self.client.get_slot().await?;
-        tracing::info!("Current slot: {}", slot);
-        let blocks = self
-            .client
-            .get_blocks_with_commitment(slot - 10, None, CommitmentConfig::confirmed())
-            .await?;
-        tracing::info!("Blocks: {:?}", blocks);
-        for slot_block in blocks {
-            let block = self
-                .client
-                .get_block_with_config(
-                    slot_block,
-                    RpcBlockConfig {
-                        transaction_details: Some(TransactionDetails::Full),
-                        encoding: Some(UiTransactionEncoding::Binary),
-                        rewards: Some(false),
-                        commitment: Some(CommitmentConfig::confirmed()),
-                        max_supported_transaction_version: Some(0),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            self.process_block(block).await?;
-            tracing::info!("Transactions: {:?}", self.transactions.read().await.len());
-            tracing::info!("Accounts: {:?}", self.accounts.read().await.len());
-        }
 
-        Ok(())
+    pub async fn run(&self) -> Result<()> {
+        let mut last_processed_slot = self.get_current_slot().await?;
+
+        loop {
+            let current_slot = self.get_current_slot().await?;
+            let blocks = self
+                .get_blocks(last_processed_slot + 1, current_slot)
+                .await?;
+
+            let mut join_set = JoinSet::new();
+
+            for slot in blocks {
+                let aggregator = self.clone();
+                join_set.spawn(async move {
+                    match aggregator.process_block(slot).await {
+                        Ok(_) => {
+                            tracing::info!("Successfully processed block {}", slot);
+                            Ok(slot)
+                        }
+                        Err(e) => {
+                            tracing::error!("Error processing block {}: {:?}", slot, e);
+                            Err(slot)
+                        }
+                    }
+                });
+            }
+
+            while let Some(result) = join_set.join_next().await {
+                match result {
+                    Ok(Ok(slot)) => {
+                        last_processed_slot = last_processed_slot.max(slot);
+                    }
+                    Ok(Err(slot)) => {
+                        tracing::error!("Failed to process block {}", slot);
+                    }
+                    Err(e) => {
+                        tracing::error!("JoinSet error: {:?}", e);
+                    }
+                }
+            }
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     }
 
-    async fn process_block(&self, block: UiConfirmedBlock) -> Result<()> {
-        let mut transactions = self.transactions.write().await;
-        let mut accounts = self.accounts.write().await;
+    async fn get_current_slot(&self) -> Result<u64> {
+        let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
 
-        // Process transactions
+        Retry::spawn(retry_strategy, || self.client.get_slot())
+            .await
+            .context("Failed to get current slot")
+    }
+
+    async fn get_blocks(&self, start_slot: u64, end_slot: u64) -> Result<Vec<u64>> {
+        let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
+
+        Retry::spawn(retry_strategy, || {
+            self.client.get_blocks_with_commitment(
+                start_slot,
+                Some(end_slot),
+                CommitmentConfig::confirmed(),
+            )
+        })
+        .await
+        .context("Failed to get blocks")
+    }
+
+    async fn get_block(&self, slot: u64) -> Result<UiConfirmedBlock> {
+        let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
+
+        Retry::spawn(retry_strategy, || {
+            self.client.get_block_with_config(
+                slot,
+                RpcBlockConfig {
+                    transaction_details: Some(TransactionDetails::Full),
+                    encoding: Some(UiTransactionEncoding::Base64),
+                    rewards: Some(false),
+                    commitment: Some(CommitmentConfig::confirmed()),
+                    max_supported_transaction_version: Some(0),
+                    ..Default::default()
+                },
+            )
+        })
+        .await
+        .context("Failed to get block")
+    }
+
+    async fn process_block(&self, slot: u64) -> Result<()> {
+        let block = self.get_block(slot).await?;
+
         if let Some(txs) = block.transactions {
             for tx in txs {
                 if let Some(decode_tx) = tx.transaction.decode() {
-                    let hash = decode_tx.verify_and_hash_message()?;
-                    if let Some((sender, receiver, amount)) = Self::get_transfer_details(&decode_tx)
-                    {
-                        transactions.push(Transaction {
-                            id: hash.to_bytes(),
-                            sender,
-                            receiver,
-                            amount,
-                            timestamp: block.block_time.unwrap(),
-                        });
-                    }
-                }
-
-                if let Some(meta) = &tx.meta {
-                    for (account_index, account_key) in
-                        Self::get_accounts_keys(&tx)?.iter().enumerate()
-                    {
-                        if let Some(post_balance) = meta.post_balances.get(account_index) {
-                            if let Some(pre_balance) = meta.pre_balances.get(account_index) {
-                                if post_balance != pre_balance {
-                                    accounts.push(Account {
-                                        address: *account_key,
-                                        balance: *post_balance,
-                                    });
+                    if let Some(meta) = &tx.meta {
+                        let tx_id = format!("{}", decode_tx.signatures[0]);
+                        let (instructions, account_keys) = Self::get_transfer_details(&decode_tx);
+                        for instruction in instructions.iter() {
+                            if let Ok(system_instruction) =
+                                bincode::deserialize::<SystemInstruction>(&instruction.data)
+                            {
+                                match system_instruction {
+                                    SystemInstruction::Transfer { lamports } => {
+                                        self.process_transfer(
+                                            &tx_id,
+                                            &instruction,
+                                            &account_keys,
+                                            lamports,
+                                            meta,
+                                            block.block_time,
+                                            slot,
+                                        )
+                                        .await?;
+                                    }
+                                    SystemInstruction::CreateAccount {
+                                        lamports,
+                                        space: _,
+                                        owner,
+                                    } => {
+                                        self.process_create_account(
+                                            &instruction,
+                                            &account_keys,
+                                            lamports,
+                                        )
+                                        .await?;
+                                    }
+                                    _ => continue,
                                 }
                             }
                         }
+                        self.update_account_balances(&account_keys, meta).await?;
                     }
                 }
             }
@@ -108,77 +198,115 @@ impl Aggregator {
         Ok(())
     }
 
-    fn get_accounts_keys(transaction: &EncodedTransactionWithStatusMeta) -> Result<Vec<Pubkey>> {
-        if let Some(message) = transaction.transaction.decode() {
-            return match message.message {
-                solana_sdk::message::VersionedMessage::Legacy(msg) => Ok(msg.account_keys),
-                solana_sdk::message::VersionedMessage::V0(msg) => Ok(msg.account_keys),
-            };
-        } else {
-            match &transaction.transaction {
-                solana_transaction_status::EncodedTransaction::Json(json_tx) => {
-                    let accounts = match &json_tx.message {
-                        solana_transaction_status::UiMessage::Parsed(parsed_message) => {
-                            parsed_message
-                                .account_keys
-                                .iter()
-                                .map(|a| a.pubkey.clone())
-                                .collect()
-                        }
-                        solana_transaction_status::UiMessage::Raw(raw_message) => {
-                            raw_message.account_keys.clone()
-                        }
-                    };
-                    accounts
-                        .iter()
-                        .map(|a| Pubkey::from_str(a.as_str()))
-                        .collect::<Result<Vec<Pubkey>, _>>()
-                        .map_err(|_| anyhow::anyhow!("Failed to parse account key"))
-                }
-                solana_transaction_status::EncodedTransaction::Accounts(accounts) => accounts
-                    .account_keys
-                    .iter()
-                    .map(|a| Pubkey::from_str(a.pubkey.as_str()))
-                    .collect::<Result<Vec<Pubkey>, _>>()
-                    .map_err(|_| anyhow::anyhow!("Failed to parse account key")),
-                _ => Ok(vec![]),
-            }
-        }
+    async fn process_transfer(
+        &self,
+        tx_id: &str,
+        instruction: &CompiledInstruction,
+        account_keys: &[Pubkey],
+        lamports: u64,
+        meta: &UiTransactionStatusMeta,
+        block_time: Option<i64>,
+        slot: u64,
+    ) -> Result<()> {
+        let sender = account_keys[instruction.accounts[0] as usize];
+        let receiver = account_keys[instruction.accounts[1] as usize];
+        let transaction = Transaction {
+            id: tx_id.to_string(),
+            sender,
+            receiver,
+            amount: lamports,
+            fee: meta.fee,
+            slot,
+            timestamp: block_time.unwrap_or_else(|| {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_secs() as i64
+            }),
+        };
+
+        self.tx_sender
+            .send(transaction)
+            .await
+            .context("Failed to send transaction")?;
+
+        tracing::info!(
+            "Transfer: {} SOL from {} to {}",
+            lamports as f64 / 1e9,
+            sender,
+            receiver
+        );
+        Ok(())
     }
 
-    fn get_transfer_details(transaction: &VersionedTransaction) -> Option<(Pubkey, Pubkey, u64)> {
+    async fn process_create_account(
+        &self,
+        instruction: &CompiledInstruction,
+        account_keys: &[Pubkey],
+        lamports: u64,
+    ) -> Result<()> {
+        let new_account = account_keys[instruction.accounts[1] as usize];
+        let account = Account {
+            address: new_account,
+            balance: lamports,
+        };
+
+        self.account_sender
+            .send(account)
+            .await
+            .context("Failed to send account update")?;
+
+        tracing::info!(
+            "Account created: {} with {} SOL",
+            new_account,
+            lamports as f64 / 1e9
+        );
+        Ok(())
+    }
+
+    async fn update_account_balances(
+        &self,
+        account_keys: &[Pubkey],
+        meta: &UiTransactionStatusMeta,
+    ) -> Result<()> {
+        for (idx, (pre_balance, post_balance)) in meta
+            .pre_balances
+            .iter()
+            .zip(meta.post_balances.iter())
+            .enumerate()
+        {
+            if pre_balance != post_balance {
+                let account_key = account_keys[idx];
+                let account = Account {
+                    address: account_key,
+                    balance: *post_balance,
+                };
+
+                self.account_sender
+                    .send(account)
+                    .await
+                    .context("Failed to send account update")?;
+
+                tracing::info!(
+                    "Account balance change: {} -> {}",
+                    account_key,
+                    post_balance
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn get_transfer_details(
+        transaction: &VersionedTransaction,
+    ) -> (Vec<CompiledInstruction>, Vec<Pubkey>) {
         let message = transaction.message.clone();
 
-        let (instructions, account_keys) = match message {
+        match message {
             solana_sdk::message::VersionedMessage::Legacy(msg) => {
                 (msg.instructions, msg.account_keys)
             }
             solana_sdk::message::VersionedMessage::V0(msg) => (msg.instructions, msg.account_keys),
-        };
-
-        for instruction in instructions {
-            if let Ok(system_instruction) =
-                bincode::deserialize::<SystemInstruction>(&instruction.data)
-            {
-                match system_instruction {
-                    SystemInstruction::Transfer { lamports } => {
-                        let sender = account_keys[instruction.accounts[0] as usize];
-                        let receiver = account_keys[instruction.accounts[1] as usize];
-                        return Some((sender, receiver, lamports));
-                    }
-                    _ => continue,
-                }
-            }
         }
-
-        None
-    }
-
-    pub async fn get_transactions(&self) -> Vec<Transaction> {
-        self.transactions.read().await.clone()
-    }
-
-    pub async fn get_accounts(&self) -> Vec<Account> {
-        self.accounts.read().await.clone()
     }
 }
