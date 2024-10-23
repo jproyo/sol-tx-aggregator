@@ -1,6 +1,20 @@
 # sol-tx-aggregator
 Solana Transaction and Account Aggregator
 
+**IMPORTANT:** The process of the transaction and accounts is not 100% accurate, since I needed to spend some time on reading the Solana blockchain documentation and implementing the solution, because I had no experience with Solana blockchain before. I think there are some edge cases that are not handled correctly, but I prefer to focus on the implementation as a whole instead of spending more time on figuring out Transaction and Account datastructure on Solana blockchain.
+
+## 0. Table of Contents
+
+- [1. Introduction](#1-introduction)
+- [2. System Architecture](#2-system-architecture)
+- [3. Core Components](#3-core-components)
+- [4. Design Patterns and Architectural Decisions](#4-design-patterns-and-architectural-decisions)
+- [5. Data Flow](#5-data-flow)
+- [6. Key Technologies and Libraries](#6-key-technologies-and-libraries)
+- [7. Configuration](#7-configuration)
+- [8. Known Limitations and Future Improvements](#8-known-limitations-and-future-improvements)
+- [9. API Documentation](#9-api-documentation)
+- [10. Running the project](#10-running-the-project)
 ## 1. Introduction
 
 `sol-tx-aggregator` is a Rust-based application that aggregates Solana transactions and accounts. This document outlines the technical design and architecture of the project.
@@ -150,7 +164,7 @@ The synchronization process with the Solana blockchain includes a retry mechanis
 7. Integration tests using `testcontainers` crate
 
 
-### A. API Documentation
+### 9. API Documentation
 The following REST API endpoints are available:
 
 #### 1. Get Transactions
@@ -219,3 +233,15 @@ The following REST API endpoints are available:
 - `500 Internal Server Error`: Server-side error
 
 Note: All endpoints support CORS (Cross-Origin Resource Sharing) for browser-based clients.
+
+## 10. Running the project
+
+To see the available options, run the following command:
+```bash
+cargo run --bin sol-tx-aggregator -- --help
+```
+
+To run the project, use the following command:
+```bash
+cargo run --bin sol-tx-aggregator -- --rpc-endpoint <rpc-endpoint>
+```
