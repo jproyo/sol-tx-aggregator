@@ -1,10 +1,11 @@
 use axum::{extract::Query, routing::get, Json, Router};
 use serde::Deserialize;
+use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 
 use crate::domain::models::{Account, Transaction};
 
-pub async fn start_server() -> anyhow::Result<()> {
+pub async fn start_server(shutdown: broadcast::Sender<()>) -> Result<(), std::io::Error> {
     let app = Router::new()
         .route("/transactions", get(get_transactions))
         .route("/accounts", get(get_accounts))
@@ -12,7 +13,18 @@ pub async fn start_server() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
 
-    axum::serve(listener, app).await?;
+    let server = axum::serve(listener, app);
+
+    let mut shutdown_rx = shutdown.subscribe();
+
+    tokio::select! {
+        _ = shutdown_rx.recv() => {
+            tracing::warn!("API server received shutdown signal");
+        }
+        _ = server => {
+            tracing::warn!("API server stopped unexpectedly");
+        }
+    }
 
     Ok(())
 }

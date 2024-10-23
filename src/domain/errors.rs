@@ -1,7 +1,6 @@
+use super::models::{Account, Transaction};
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
-
-use super::models::{Account, Transaction};
 
 #[derive(Error, Debug)]
 pub enum AggregatorError {
@@ -31,6 +30,8 @@ pub enum DataStorageError {
     FailedToStoreTransaction,
     #[error("Failed to store account")]
     FailedToStoreAccount,
+    #[error("Invalid date on transaction {0}")]
+    InvalidDate(String),
 }
 
 #[derive(Error, Debug)]

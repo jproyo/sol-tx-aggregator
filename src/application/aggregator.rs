@@ -1,9 +1,12 @@
 use super::Aggregator;
-use crate::domain::{
-    errors::AggregatorError,
-    models::{Account, Notifier, Transaction},
-};
 use crate::infrastructure::bc_client::BcClient;
+use crate::{
+    domain::{
+        errors::AggregatorError,
+        models::{Account, Notifier, Transaction},
+    },
+    infrastructure::shutdown::Shutdown,
+};
 use solana_sdk::{
     instruction::CompiledInstruction, pubkey::Pubkey, system_instruction::SystemInstruction,
     transaction::VersionedTransaction,
@@ -14,61 +17,77 @@ use tokio::task::JoinSet;
 use typed_builder::TypedBuilder;
 
 #[derive(Clone, TypedBuilder)]
-pub struct SolanaAggregator<C, N> {
+pub struct SolanaAggregator<C, N, S> {
     bc_client: C,
     notifier: N,
+    shutdown: S,
 }
 
 #[async_trait::async_trait]
-impl<C, N> Aggregator for SolanaAggregator<C, N>
+impl<C, N, S> Aggregator for SolanaAggregator<C, N, S>
 where
     C: BcClient + Send + Sync + 'static + Clone,
     N: Notifier + Send + Sync + 'static + Clone,
+    S: Shutdown + Send + Sync + 'static,
 {
-    async fn run(&self) -> Result<(), AggregatorError> {
+    async fn run(self) -> Result<(), AggregatorError> {
         let mut last_processed_slot = self.bc_client.get_current_slot().await?;
+        let mut shutdown = self.shutdown.subscribe();
 
         loop {
-            let current_slot = self.bc_client.get_current_slot().await?;
-            let blocks = self
-                .bc_client
-                .get_blocks(last_processed_slot + 1, current_slot)
-                .await?;
-
-            let mut join_set = JoinSet::new();
-
-            for slot in blocks {
-                let aggregator = self.clone();
-                join_set.spawn(async move {
-                    match aggregator.process_block(slot).await {
-                        Ok(_) => {
-                            tracing::info!("Successfully processed block {}", slot);
-                            Ok(slot)
-                        }
-                        Err(e) => {
-                            tracing::error!("Error processing block {}: {:?}", slot, e);
-                            Err(slot)
-                        }
-                    }
-                });
-            }
-
-            while let Some(result) = join_set.join_next().await {
-                match result {
-                    Ok(Ok(slot)) => {
-                        last_processed_slot = last_processed_slot.max(slot);
-                    }
-                    Ok(Err(slot)) => {
-                        tracing::error!("Failed to process block {}. Retrying on next loop", slot);
-                    }
-                    Err(e) => {
-                        tracing::error!("JoinSet error: {:?}", e);
-                    }
+            tokio::select! {
+                _ = shutdown.recv() => {
+                    tracing::info!("Received shutdown signal, stopping aggregator");
+                    break;
                 }
+                _ = async {
+                    let current_slot = self.bc_client.get_current_slot().await?;
+                    let blocks = self
+                        .bc_client
+                        .get_blocks(last_processed_slot + 1, current_slot)
+                        .await?;
+
+                    let mut join_set = JoinSet::new();
+
+                    for slot in blocks {
+                        let client = self.bc_client.clone();
+                        let notifier = self.notifier.clone();
+                        join_set.spawn(async move {
+                            match Self::process_block(client, notifier, slot).await {
+                                Ok(_) => {
+                                    tracing::info!("Successfully processed block {}", slot);
+                                    Ok(slot)
+                                }
+                                Err(e) => {
+                                    tracing::error!("Error processing block {}: {:?}", slot, e);
+                                    Err(slot)
+                                }
+                            }
+                        });
+                    }
+
+                    while let Some(result) = join_set.join_next().await {
+                        match result {
+                            Ok(Ok(slot)) => {
+                                last_processed_slot = last_processed_slot.max(slot);
+                            }
+                            Ok(Err(slot)) => {
+                                tracing::error!("Failed to process block {}. Retrying on next loop", slot);
+                            }
+                            Err(e) => {
+                                tracing::error!("JoinSet error: {:?}", e);
+                            }
+                        }
+                    }
+
+                    Ok::<(), AggregatorError>(())
+                } => {}
             }
 
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
+
+        Ok(())
     }
 }
 
@@ -113,9 +132,13 @@ impl<'a> TransactionDetails<'a> {
     }
 }
 
-impl<C: BcClient, N: Notifier> SolanaAggregator<C, N> {
-    async fn process_block(&self, slot: u64) -> Result<(), AggregatorError> {
-        let block = self.bc_client.get_block(slot).await?;
+impl<C, N, S> SolanaAggregator<C, N, S>
+where
+    C: BcClient,
+    N: Notifier + Clone,
+{
+    async fn process_block(bc_client: C, notifier: N, slot: u64) -> Result<(), AggregatorError> {
+        let block = bc_client.get_block(slot).await?;
 
         if let Some(txs) = block.transactions {
             for tx in txs {
@@ -139,10 +162,11 @@ impl<C: BcClient, N: Notifier> SolanaAggregator<C, N> {
                                             slot,
                                         };
                                         let transaction = tx_details.into_transaction();
-                                        self.notifier.notify_transaction(transaction).await?;
+                                        notifier.notify_transaction(transaction).await?;
                                     }
                                     SystemInstruction::CreateAccount { lamports, .. } => {
-                                        self.process_create_account(
+                                        Self::process_create_account(
+                                            notifier.clone(),
                                             instruction,
                                             &account_keys,
                                             lamports,
@@ -153,7 +177,8 @@ impl<C: BcClient, N: Notifier> SolanaAggregator<C, N> {
                                 }
                             }
                         }
-                        self.update_account_balances(&account_keys, meta).await?;
+                        Self::update_account_balances(notifier.clone(), &account_keys, meta)
+                            .await?;
                     }
                 }
             }
@@ -163,7 +188,7 @@ impl<C: BcClient, N: Notifier> SolanaAggregator<C, N> {
     }
 
     async fn process_create_account(
-        &self,
+        notifier: N,
         instruction: &CompiledInstruction,
         account_keys: &[Pubkey],
         lamports: u64,
@@ -174,13 +199,13 @@ impl<C: BcClient, N: Notifier> SolanaAggregator<C, N> {
             balance: lamports,
         };
 
-        self.notifier.notify_account(account).await?;
+        notifier.notify_account(account).await?;
 
         Ok(())
     }
 
     async fn update_account_balances(
-        &self,
+        notifier: N,
         account_keys: &[Pubkey],
         meta: &UiTransactionStatusMeta,
     ) -> Result<(), AggregatorError> {
@@ -197,7 +222,7 @@ impl<C: BcClient, N: Notifier> SolanaAggregator<C, N> {
                     balance: *post_balance,
                 };
 
-                self.notifier.notify_account(account).await?;
+                notifier.notify_account(account).await?;
             }
         }
         Ok(())
