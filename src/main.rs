@@ -1,12 +1,10 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use sol_tx_aggregator::application::app;
 use sol_tx_aggregator::application::app::Application;
 use sol_tx_aggregator::service;
+use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::broadcast;
-use tracing_subscriber;
 
 #[tokio::main]
 async fn main() -> Result<()> {

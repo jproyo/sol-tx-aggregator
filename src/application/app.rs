@@ -20,6 +20,7 @@ pub trait Application {
     ) -> Result<(), AggregatorError>;
     async fn get_transactions(&self) -> Result<Vec<Transaction>, DataStorageError>;
     async fn get_accounts(&self) -> Result<Vec<Account>, DataStorageError>;
+    async fn get_account(&self, address: Pubkey) -> Result<Account, DataStorageError>;
     async fn get_transaction(&self, id: String) -> Result<Transaction, DataStorageError>;
     async fn get_transactions_by_sender(
         &self,
@@ -43,7 +44,11 @@ pub trait Application {
 pub struct App<D> {
     database: Arc<D>,
 }
-
+impl Default for App<InMemoryDatabase> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl App<InMemoryDatabase> {
     pub fn new() -> Self {
         let database = Arc::new(InMemoryDatabase::default());
@@ -83,6 +88,11 @@ where
     async fn get_accounts(&self) -> Result<Vec<Account>, DataStorageError> {
         tracing::info!("Getting all accounts ...");
         self.database.get_accounts().await
+    }
+
+    async fn get_account(&self, address: Pubkey) -> Result<Account, DataStorageError> {
+        tracing::info!("Getting account by address: {}", address);
+        self.database.get_account(address).await
     }
 
     async fn get_transaction(&self, id: String) -> Result<Transaction, DataStorageError> {
