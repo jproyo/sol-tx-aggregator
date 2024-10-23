@@ -19,22 +19,22 @@ pub struct SolanaClient {
 }
 
 impl SolanaClient {
-    /// Creates a new `SolanaClient` instance from the given RPC URL.
+    /// Creates a new `SolanaClient` instance from the given RPC URL and number of retries.
     ///
     /// # Arguments
     ///
     /// * `rpc_url` - The URL of the Solana RPC endpoint.
-    ///
+    /// * `num_retries` - The number of retries for the RPC client.
     /// # Returns
     ///
     /// A new `SolanaClient` instance.
-    pub fn from_url(rpc_url: &str) -> Self {
+    pub(crate) fn new(rpc_url: String, num_retries: usize) -> Self {
         Self {
             rpc_client: Arc::new(RpcClient::new_with_commitment(
-                rpc_url.to_string(),
+                rpc_url,
                 CommitmentConfig::confirmed(),
             )),
-            num_retries: 3,
+            num_retries,
         }
     }
 }
@@ -54,7 +54,7 @@ impl BcClient for SolanaClient {
 
         let result = Retry::spawn(retry_strategy, || self.rpc_client.get_slot())
             .await
-            .map_err(|e| BcClientError::FailedToGetCurrentSlot(e.to_string()))?;
+            .map_err(|e| BcClientError::GettingCurrentSlot(e.to_string()))?;
         Ok(result)
     }
 
@@ -82,7 +82,7 @@ impl BcClient for SolanaClient {
             )
         })
         .await
-        .map_err(|e| BcClientError::FailedToGetBlocks(e.to_string()))?;
+        .map_err(|e| BcClientError::RetrievingBlocks(e.to_string()))?;
         Ok(result)
     }
 
@@ -115,7 +115,7 @@ impl BcClient for SolanaClient {
             )
         })
         .await
-        .map_err(|e| BcClientError::FailedToGetBlock(e.to_string()))?;
+        .map_err(|e| BcClientError::GetBlock(e.to_string()))?;
         Ok(result)
     }
 }

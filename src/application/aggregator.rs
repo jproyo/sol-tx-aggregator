@@ -436,8 +436,8 @@ mod tests {
             program_id,
             &system_instruction,
             vec![
-                AccountMeta::new(sender.clone(), true),
-                AccountMeta::new(recipient.clone(), false),
+                AccountMeta::new(sender, true),
+                AccountMeta::new(recipient, false),
             ],
         );
         let message = solana_sdk::message::Message::new(&[instructions], Some(&sender));

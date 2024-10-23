@@ -5,31 +5,31 @@ use tokio::sync::mpsc::error::SendError;
 #[derive(Error, Debug)]
 pub enum AggregatorError {
     #[error("Failed to process block {0}. Retrying on next loop")]
-    FailedToProcessBlock(u64),
+    ToProcessBlock(u64),
     #[error("Failed solana rpc client {0}")]
-    FailedSolanaRpcClient(#[from] solana_client::client_error::ClientError),
+    SolanaRpcClient(#[from] solana_client::client_error::ClientError),
     #[error("Failed to notify notifier {0}")]
-    FailedToNotifyNotifier(#[from] NotifierError),
+    Notifier(#[from] NotifierError),
     #[error("Failed with blockchain communication client {0}")]
-    FailedBcClient(#[from] BcClientError),
+    BcClient(#[from] BcClientError),
 }
 
 #[derive(Error, Debug)]
 pub enum BcClientError {
     #[error("Failed to get current slot {0}")]
-    FailedToGetCurrentSlot(String),
+    GettingCurrentSlot(String),
     #[error("Failed to get blocks {0}")]
-    FailedToGetBlocks(String),
+    RetrievingBlocks(String),
     #[error("Failed to get block {0}")]
-    FailedToGetBlock(String),
+    GetBlock(String),
 }
 
 #[derive(Error, Debug)]
 pub enum DataStorageError {
     #[error("Failed to store transaction")]
-    FailedToStoreTransaction,
+    StoreTransaction,
     #[error("Failed to store account")]
-    FailedToStoreAccount,
+    ToStoreAccount,
     #[error("Invalid date on transaction {0}")]
     InvalidDate(String),
     #[error("Transaction not found {0}")]
@@ -41,7 +41,7 @@ pub enum DataStorageError {
 #[derive(Error, Debug)]
 pub enum NotifierError {
     #[error("Failed to notify transaction {0}")]
-    FailedToNotifyTransaction(#[from] SendError<Transaction>),
+    OnTransaction(#[from] SendError<Transaction>),
     #[error("Failed to notify account {0}")]
-    FailedToNotifyAccount(#[from] SendError<Account>),
+    Account(#[from] SendError<Account>),
 }

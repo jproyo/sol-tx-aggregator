@@ -29,6 +29,7 @@ use tower_http::cors::CorsLayer;
 pub async fn start_server(
     shutdown: broadcast::Sender<()>,
     app: Arc<impl Application + Send + Sync + 'static>,
+    listen_port: u16,
 ) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/transactions", get(get_transactions))
@@ -36,11 +37,11 @@ pub async fn start_server(
         .with_state(app)
         .layer(CorsLayer::permissive());
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{listen_port}")).await?;
 
     let server = axum::serve(listener, app);
 
-    tracing::info!("API server started on port 3000");
+    tracing::info!("API server started on port {listen_port}");
 
     let mut shutdown_rx = shutdown.subscribe();
 

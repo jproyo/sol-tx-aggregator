@@ -26,6 +26,7 @@ pub trait Application {
     async fn run_aggregator(
         &self,
         endpoint: &str,
+        num_retries: usize,
         shutdown: broadcast::Sender<()>,
     ) -> Result<(), AggregatorError>;
 
@@ -139,10 +140,11 @@ where
     async fn run_aggregator(
         &self,
         endpoint: &str,
+        num_retries: usize,
         shutdown: broadcast::Sender<()>,
     ) -> Result<(), AggregatorError> {
         let shutdown_channel = ShutdownChannel::new(shutdown);
-        let bc_client = SolanaClient::from_url(endpoint);
+        let bc_client = SolanaClient::new(endpoint.to_string(), num_retries);
         let aggregator = SolanaAggregator::builder()
             .bc_client(bc_client)
             .notifier(ChannelNotifier::new(

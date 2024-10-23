@@ -290,15 +290,15 @@ mod tests {
 
     fn create_test_transaction(
         id: &str,
-        sender: &Pubkey,
-        receiver: &Pubkey,
+        sender: Pubkey,
+        receiver: Pubkey,
         amount: u64,
         slot: u64,
     ) -> Transaction {
         Transaction {
             id: id.to_string(),
-            sender: sender.clone(),
-            receiver: receiver.clone(),
+            sender,
+            receiver,
             amount,
             fee: 0,
             timestamp: Utc::now().timestamp(),
@@ -309,8 +309,7 @@ mod tests {
     #[tokio::test]
     async fn test_store_and_retrieve_transaction() {
         let db = InMemoryDatabase::default();
-        let tx =
-            create_test_transaction("tx1", &Pubkey::new_unique(), &Pubkey::new_unique(), 100, 1);
+        let tx = create_test_transaction("tx1", Pubkey::new_unique(), Pubkey::new_unique(), 100, 1);
 
         db.store_transaction(tx.clone()).await.unwrap();
 
@@ -337,8 +336,8 @@ mod tests {
     async fn test_get_transactions_by_sender() {
         let db = InMemoryDatabase::default();
         let sender = Pubkey::new_unique();
-        let tx1 = create_test_transaction("tx1", &sender, &Pubkey::new_unique(), 100, 1);
-        let tx2 = create_test_transaction("tx2", &sender, &Pubkey::new_unique(), 200, 2);
+        let tx1 = create_test_transaction("tx1", sender, Pubkey::new_unique(), 100, 1);
+        let tx2 = create_test_transaction("tx2", sender, Pubkey::new_unique(), 200, 2);
 
         db.store_transaction(tx1.clone()).await.unwrap();
         db.store_transaction(tx2.clone()).await.unwrap();
@@ -353,9 +352,9 @@ mod tests {
     async fn test_get_transactions_by_slot() {
         let db = InMemoryDatabase::default();
         let tx1 =
-            create_test_transaction("tx1", &Pubkey::new_unique(), &Pubkey::new_unique(), 100, 1);
+            create_test_transaction("tx1", Pubkey::new_unique(), Pubkey::new_unique(), 100, 1);
         let tx2 =
-            create_test_transaction("tx2", &Pubkey::new_unique(), &Pubkey::new_unique(), 200, 1);
+            create_test_transaction("tx2", Pubkey::new_unique(), Pubkey::new_unique(), 200, 1);
 
         db.store_transaction(tx1.clone()).await.unwrap();
         db.store_transaction(tx2.clone()).await.unwrap();
@@ -369,8 +368,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_transactions_by_date() {
         let db = InMemoryDatabase::default();
-        let tx =
-            create_test_transaction("tx1", &Pubkey::new_unique(), &Pubkey::new_unique(), 100, 1);
+        let tx = create_test_transaction("tx1", Pubkey::new_unique(), Pubkey::new_unique(), 100, 1);
         let date = Utc::now().format("%Y-%m-%d").to_string();
 
         db.store_transaction(tx.clone()).await.unwrap();
