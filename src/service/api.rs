@@ -2,7 +2,7 @@ use axum::{extract::Query, routing::get, Json, Router};
 use serde::Deserialize;
 use tower_http::cors::CorsLayer;
 
-use crate::models::{Account, Transaction};
+use crate::domain::models::{Account, Transaction};
 
 pub async fn start_server() -> anyhow::Result<()> {
     let app = Router::new()

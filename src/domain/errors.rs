@@ -1,4 +1,7 @@
 use thiserror::Error;
+use tokio::sync::mpsc::error::SendError;
+
+use super::models::{Account, Transaction};
 
 #[derive(Error, Debug)]
 pub enum AggregatorError {
@@ -32,8 +35,8 @@ pub enum DataStorageError {
 
 #[derive(Error, Debug)]
 pub enum NotifierError {
-    #[error("Failed to notify transaction")]
-    FailedToNotifyTransaction,
-    #[error("Failed to notify account")]
-    FailedToNotifyAccount,
+    #[error("Failed to notify transaction {0}")]
+    FailedToNotifyTransaction(#[from] SendError<Transaction>),
+    #[error("Failed to notify account {0}")]
+    FailedToNotifyAccount(#[from] SendError<Account>),
 }

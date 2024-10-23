@@ -1,6 +1,8 @@
 use aggregator::SolanaAggregator;
 
 use crate::domain::errors::AggregatorError;
+use crate::infrastructure::channel_notifier::ChannelNotifier;
+use crate::infrastructure::memory::InMemoryDatabase;
 use crate::infrastructure::solana_client::SolanaClient;
 
 pub mod aggregator;
@@ -38,9 +40,10 @@ pub trait Aggregator {
 
 pub fn app(endpoint: &str) -> Result<impl Aggregator, AggregatorError> {
     let bc_client = SolanaClient::from_url(endpoint);
+    let database = InMemoryDatabase::default();
     let aggregator = SolanaAggregator::builder()
         .bc_client(bc_client)
-        .notifier(Notifier::new())
+        .notifier(ChannelNotifier::new(database))
         .build();
     Ok(aggregator)
 }
