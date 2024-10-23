@@ -1,5 +1,8 @@
-use crate::models::{Account, Transaction};
-use anyhow::{Context, Result};
+use super::Aggregator;
+use crate::domain::{
+    errors::AggregatorError,
+    models::{Account, Notifier, Transaction},
+};
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcBlockConfig};
 use solana_sdk::{
     commitment_config::CommitmentConfig, instruction::CompiledInstruction, pubkey::Pubkey,
@@ -12,54 +15,24 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::{sync::mpsc, task::JoinSet};
+use tokio::task::JoinSet;
 use tokio_retry::{
     strategy::{jitter, ExponentialBackoff},
     Retry,
 };
 
 #[derive(Clone)]
-pub struct Aggregator {
+pub struct SolanaAggregator<N> {
     client: Arc<RpcClient>,
-    tx_sender: mpsc::Sender<Transaction>,
-    account_sender: mpsc::Sender<Account>,
+    notifier: N,
 }
 
-impl Aggregator {
-    pub async fn new() -> Result<Self> {
-        let endpoint =
-            "https://devnet.helius-rpc.com/?api-key=883a58ea-8640-456c-ad09-802120787faf";
-        let client = Arc::new(RpcClient::new_with_commitment(
-            endpoint.to_string(),
-            CommitmentConfig::confirmed(),
-        ));
-        let (tx_sender, mut tx_receiver) = mpsc::channel::<Transaction>(1000);
-        let (account_sender, mut account_receiver) = mpsc::channel::<Account>(1000);
-
-        // Spawn a task to handle transactions
-        tokio::spawn(async move {
-            while let Some(transaction) = tx_receiver.recv().await {
-                // Process the transaction
-                println!("Received transaction: {}", transaction.id);
-            }
-        });
-
-        // Spawn a task to handle account updates
-        tokio::spawn(async move {
-            while let Some(account) = account_receiver.recv().await {
-                // Process the account update
-                println!("Received account update: {}", account.address);
-            }
-        });
-
-        Ok(Self {
-            client,
-            tx_sender,
-            account_sender,
-        })
-    }
-
-    pub async fn run(&self) -> Result<()> {
+#[async_trait::async_trait]
+impl<N> Aggregator for SolanaAggregator<N>
+where
+    N: Notifier + Send + Sync + 'static + Clone,
+{
+    async fn run(&self) -> Result<(), AggregatorError> {
         let mut last_processed_slot = self.get_current_slot().await?;
 
         loop {
@@ -102,34 +75,68 @@ impl Aggregator {
 
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
+
+        Ok(())
+    }
+}
+
+impl<N: Notifier> SolanaAggregator<N> {
+    pub async fn new(notifier: N, endpoint: String) -> Result<Self, AggregatorError> {
+        let client = Arc::new(RpcClient::new_with_commitment(
+            endpoint.to_string(),
+            CommitmentConfig::confirmed(),
+        ));
+        //let (tx_sender, mut tx_receiver) = mpsc::channel::<Transaction>(1000);
+        //let (account_sender, mut account_receiver) = mpsc::channel::<Account>(1000);
+
+        // Spawn a task to handle transactions
+        //tokio::spawn(async move {
+        //    while let Some(transaction) = tx_receiver.recv().await {
+        //        // Process the transaction
+        //        println!("Received transaction: {}", transaction.id);
+        //    }
+        //});
+
+        // Spawn a task to handle account updates
+        //tokio::spawn(async move {
+        //    while let Some(account) = account_receiver.recv().await {
+        //        // Process the account update
+        //        println!("Received account update: {}", account.address);
+        //    }
+        //});
+
+        Ok(Self { client, notifier })
     }
 
-    async fn get_current_slot(&self) -> Result<u64> {
+    async fn get_current_slot(&self) -> Result<u64, AggregatorError> {
         let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
 
-        Retry::spawn(retry_strategy, || self.client.get_slot())
-            .await
-            .context("Failed to get current slot")
+        let result = Retry::spawn(retry_strategy, || self.client.get_slot()).await?;
+        Ok(result)
     }
 
-    async fn get_blocks(&self, start_slot: u64, end_slot: u64) -> Result<Vec<u64>> {
+    async fn get_blocks(
+        &self,
+        start_slot: u64,
+        end_slot: u64,
+    ) -> Result<Vec<u64>, AggregatorError> {
         let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
 
-        Retry::spawn(retry_strategy, || {
+        let result = Retry::spawn(retry_strategy, || {
             self.client.get_blocks_with_commitment(
                 start_slot,
                 Some(end_slot),
                 CommitmentConfig::confirmed(),
             )
         })
-        .await
-        .context("Failed to get blocks")
+        .await?;
+        Ok(result)
     }
 
-    async fn get_block(&self, slot: u64) -> Result<UiConfirmedBlock> {
+    async fn get_block(&self, slot: u64) -> Result<UiConfirmedBlock, AggregatorError> {
         let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
 
-        Retry::spawn(retry_strategy, || {
+        let result = Retry::spawn(retry_strategy, || {
             self.client.get_block_with_config(
                 slot,
                 RpcBlockConfig {
@@ -142,11 +149,11 @@ impl Aggregator {
                 },
             )
         })
-        .await
-        .context("Failed to get block")
+        .await?;
+        Ok(result)
     }
 
-    async fn process_block(&self, slot: u64) -> Result<()> {
+    async fn process_block(&self, slot: u64) -> Result<(), AggregatorError> {
         let block = self.get_block(slot).await?;
 
         if let Some(txs) = block.transactions {
@@ -206,7 +213,7 @@ impl Aggregator {
         meta: &UiTransactionStatusMeta,
         block_time: Option<i64>,
         slot: u64,
-    ) -> Result<()> {
+    ) -> Result<(), AggregatorError> {
         let executer = instruction.program_id_index as usize;
         let sender: Pubkey;
         let receiver: Pubkey;
@@ -232,17 +239,8 @@ impl Aggregator {
             }),
         };
 
-        self.tx_sender
-            .send(transaction)
-            .await
-            .context("Failed to send transaction")?;
+        self.notifier.notify_transaction(transaction).await?;
 
-        tracing::info!(
-            "Transfer: {} SOL from {} to {}",
-            lamports as f64 / 1e9,
-            sender,
-            receiver
-        );
         Ok(())
     }
 
@@ -251,23 +249,15 @@ impl Aggregator {
         instruction: &CompiledInstruction,
         account_keys: &[Pubkey],
         lamports: u64,
-    ) -> Result<()> {
+    ) -> Result<(), AggregatorError> {
         let new_account = account_keys[instruction.accounts[1] as usize];
         let account = Account {
             address: new_account,
             balance: lamports,
         };
 
-        self.account_sender
-            .send(account)
-            .await
-            .context("Failed to send account update")?;
+        self.notifier.notify_account(account).await?;
 
-        tracing::info!(
-            "Account created: {} with {} SOL",
-            new_account,
-            lamports as f64 / 1e9
-        );
         Ok(())
     }
 
@@ -275,7 +265,7 @@ impl Aggregator {
         &self,
         account_keys: &[Pubkey],
         meta: &UiTransactionStatusMeta,
-    ) -> Result<()> {
+    ) -> Result<(), AggregatorError> {
         for (idx, (pre_balance, post_balance)) in meta
             .pre_balances
             .iter()
@@ -289,16 +279,7 @@ impl Aggregator {
                     balance: *post_balance,
                 };
 
-                self.account_sender
-                    .send(account)
-                    .await
-                    .context("Failed to send account update")?;
-
-                tracing::info!(
-                    "Account balance change: {} -> {}",
-                    account_key,
-                    post_balance
-                );
+                self.notifier.notify_account(account).await?;
             }
         }
         Ok(())
