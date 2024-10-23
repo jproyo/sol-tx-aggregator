@@ -65,7 +65,6 @@ impl BcClient for SolanaClient {
                     rewards: Some(false),
                     commitment: Some(CommitmentConfig::confirmed()),
                     max_supported_transaction_version: Some(0),
-                    ..Default::default()
                 },
             )
         })

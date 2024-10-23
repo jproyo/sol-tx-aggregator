@@ -1,15 +1,15 @@
-use tokio::sync::{mpsc, oneshot};
-
 use crate::domain::{
     errors::NotifierError,
     models::{Account, DataStorage, Notifier, Transaction},
 };
+use std::marker::PhantomData;
+use tokio::sync::mpsc;
 
 #[derive(Clone)]
 pub struct ChannelNotifier<D> {
     transactions: mpsc::Sender<Transaction>,
     accounts: mpsc::Sender<Account>,
-    database: D,
+    _phantom: PhantomData<D>,
 }
 
 impl<D> ChannelNotifier<D>
@@ -26,7 +26,7 @@ where
         Self {
             transactions: tx_transactions,
             accounts: tx_accounts,
-            database,
+            _phantom: PhantomData,
         }
     }
 }
