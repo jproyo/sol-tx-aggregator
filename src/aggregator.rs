@@ -6,8 +6,7 @@ use solana_sdk::{
     system_instruction::SystemInstruction, transaction::VersionedTransaction,
 };
 use solana_transaction_status::{
-    EncodedTransactionWithStatusMeta, TransactionDetails, UiConfirmedBlock, UiTransactionEncoding,
-    UiTransactionStatusMeta,
+    TransactionDetails, UiConfirmedBlock, UiTransactionEncoding, UiTransactionStatusMeta,
 };
 use std::{
     sync::Arc,
@@ -93,7 +92,7 @@ impl Aggregator {
                         last_processed_slot = last_processed_slot.max(slot);
                     }
                     Ok(Err(slot)) => {
-                        tracing::error!("Failed to process block {}", slot);
+                        tracing::error!("Failed to process block {}. Retrying on next loop", slot);
                     }
                     Err(e) => {
                         tracing::error!("JoinSet error: {:?}", e);
@@ -208,8 +207,16 @@ impl Aggregator {
         block_time: Option<i64>,
         slot: u64,
     ) -> Result<()> {
-        let sender = account_keys[instruction.accounts[0] as usize];
-        let receiver = account_keys[instruction.accounts[1] as usize];
+        let executer = instruction.program_id_index as usize;
+        let sender: Pubkey;
+        let receiver: Pubkey;
+        if executer == 0 {
+            sender = account_keys[instruction.accounts[executer] as usize];
+            receiver = account_keys[instruction.accounts[executer + 1] as usize];
+        } else {
+            sender = account_keys[instruction.accounts[0] as usize];
+            receiver = account_keys[executer];
+        }
         let transaction = Transaction {
             id: tx_id.to_string(),
             sender,
