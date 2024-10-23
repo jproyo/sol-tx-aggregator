@@ -8,25 +8,6 @@ pub mod app;
 /// which typically involves collecting, processing, and potentially storing
 /// transaction data from a blockchain network.
 ///
-/// # Examples
-///
-/// ```no_run
-/// use crate::application::Aggregator;
-/// use crate::domain::errors::AggregatorError;
-///
-/// struct MyAggregator;
-///
-/// #[async_trait]
-/// impl Aggregator for MyAggregator {
-///     async fn run(&self) -> Result<(), AggregatorError> {
-///         // Implement aggregation logic here
-///         Ok(())
-///     }
-/// }
-/// ```
-///
-/// # Errors
-///
 /// The `run` method returns a `Result` where the `Err` variant is an `AggregatorError`.
 /// This allows for proper error handling and propagation throughout the application.
 #[async_trait::async_trait]
