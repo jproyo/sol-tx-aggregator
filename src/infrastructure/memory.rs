@@ -282,3 +282,101 @@ impl InMemoryDatabase {
             .collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::models::Transaction;
+
+    fn create_test_transaction(
+        id: &str,
+        sender: &Pubkey,
+        receiver: &Pubkey,
+        amount: u64,
+        slot: u64,
+    ) -> Transaction {
+        Transaction {
+            id: id.to_string(),
+            sender: sender.clone(),
+            receiver: receiver.clone(),
+            amount,
+            fee: 0,
+            timestamp: Utc::now().timestamp(),
+            slot,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_store_and_retrieve_transaction() {
+        let db = InMemoryDatabase::default();
+        let tx =
+            create_test_transaction("tx1", &Pubkey::new_unique(), &Pubkey::new_unique(), 100, 1);
+
+        db.store_transaction(tx.clone()).await.unwrap();
+
+        let retrieved_tx = db.get_transaction("tx1".to_string()).await.unwrap();
+        assert_eq!(tx, retrieved_tx);
+    }
+
+    #[tokio::test]
+    async fn test_store_and_retrieve_account() {
+        let db = InMemoryDatabase::default();
+        let account = Account {
+            address: Pubkey::new_unique(),
+            balance: 1000,
+            last_slot_updated: 1,
+        };
+
+        db.store_account(account.clone()).await.unwrap();
+
+        let retrieved_account = db.get_account(account.address).await.unwrap();
+        assert_eq!(account, retrieved_account);
+    }
+
+    #[tokio::test]
+    async fn test_get_transactions_by_sender() {
+        let db = InMemoryDatabase::default();
+        let sender = Pubkey::new_unique();
+        let tx1 = create_test_transaction("tx1", &sender, &Pubkey::new_unique(), 100, 1);
+        let tx2 = create_test_transaction("tx2", &sender, &Pubkey::new_unique(), 200, 2);
+
+        db.store_transaction(tx1.clone()).await.unwrap();
+        db.store_transaction(tx2.clone()).await.unwrap();
+
+        let transactions = db.get_transactions_by_sender(sender).await.unwrap();
+        assert_eq!(transactions.len(), 2);
+        assert!(transactions.contains(&tx1));
+        assert!(transactions.contains(&tx2));
+    }
+
+    #[tokio::test]
+    async fn test_get_transactions_by_slot() {
+        let db = InMemoryDatabase::default();
+        let tx1 =
+            create_test_transaction("tx1", &Pubkey::new_unique(), &Pubkey::new_unique(), 100, 1);
+        let tx2 =
+            create_test_transaction("tx2", &Pubkey::new_unique(), &Pubkey::new_unique(), 200, 1);
+
+        db.store_transaction(tx1.clone()).await.unwrap();
+        db.store_transaction(tx2.clone()).await.unwrap();
+
+        let transactions = db.get_transactions_by_slot(1).await.unwrap();
+        assert_eq!(transactions.len(), 2);
+        assert!(transactions.contains(&tx1));
+        assert!(transactions.contains(&tx2));
+    }
+
+    #[tokio::test]
+    async fn test_get_transactions_by_date() {
+        let db = InMemoryDatabase::default();
+        let tx =
+            create_test_transaction("tx1", &Pubkey::new_unique(), &Pubkey::new_unique(), 100, 1);
+        let date = Utc::now().format("%Y-%m-%d").to_string();
+
+        db.store_transaction(tx.clone()).await.unwrap();
+
+        let transactions = db.get_transactions_by_date(date).await.unwrap();
+        assert_eq!(transactions.len(), 1);
+        assert_eq!(transactions[0], tx);
+    }
+}

@@ -15,6 +15,7 @@ use super::bc_client::BcClient;
 #[derive(Clone)]
 pub struct SolanaClient {
     rpc_client: Arc<RpcClient>,
+    num_retries: usize,
 }
 
 impl SolanaClient {
@@ -33,6 +34,7 @@ impl SolanaClient {
                 rpc_url.to_string(),
                 CommitmentConfig::confirmed(),
             )),
+            num_retries: 3,
         }
     }
 }
@@ -45,7 +47,10 @@ impl BcClient for SolanaClient {
     ///
     /// The current slot number as a `u64`, or a `BcClientError` if the operation fails.
     async fn get_current_slot(&self) -> Result<u64, BcClientError> {
-        let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
+        let retry_strategy = ExponentialBackoff::from_millis(500)
+            .factor(2)
+            .map(jitter)
+            .take(self.num_retries);
 
         let result = Retry::spawn(retry_strategy, || self.rpc_client.get_slot())
             .await
@@ -64,7 +69,10 @@ impl BcClient for SolanaClient {
     ///
     /// A vector of block numbers (slots) within the specified range, or a `BcClientError` if the operation fails.
     async fn get_blocks(&self, start_slot: u64, end_slot: u64) -> Result<Vec<u64>, BcClientError> {
-        let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
+        let retry_strategy = ExponentialBackoff::from_millis(500)
+            .factor(2)
+            .map(jitter)
+            .take(self.num_retries);
 
         let result = Retry::spawn(retry_strategy, || {
             self.rpc_client.get_blocks_with_commitment(
@@ -89,7 +97,10 @@ impl BcClient for SolanaClient {
     /// A `UiConfirmedBlock` containing detailed information about the requested block,
     /// or a `BcClientError` if the operation fails.
     async fn get_block(&self, slot: u64) -> Result<UiConfirmedBlock, BcClientError> {
-        let retry_strategy = ExponentialBackoff::from_millis(500).map(jitter).take(3);
+        let retry_strategy = ExponentialBackoff::from_millis(500)
+            .factor(2)
+            .map(jitter)
+            .take(self.num_retries);
 
         let result = Retry::spawn(retry_strategy, || {
             self.rpc_client.get_block_with_config(
@@ -106,5 +117,49 @@ impl BcClient for SolanaClient {
         .await
         .map_err(|e| BcClientError::FailedToGetBlock(e.to_string()))?;
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_get_current_slot_with_retries() {
+        let mock_client = RpcClient::new("http://localhost:8899".to_string());
+        let solana_client = SolanaClient {
+            rpc_client: Arc::new(mock_client),
+            num_retries: 1,
+        };
+
+        let result = solana_client.get_current_slot().await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_blocks_with_retries() {
+        let mock_client = RpcClient::new("http://localhost:8899".to_string());
+
+        let solana_client = SolanaClient {
+            rpc_client: Arc::new(mock_client),
+            num_retries: 1,
+        };
+
+        let result = solana_client.get_blocks(10, 20).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_block_with_retries() {
+        let mock_client = RpcClient::new("http://localhost:8899".to_string());
+
+        let solana_client = SolanaClient {
+            rpc_client: Arc::new(mock_client),
+            num_retries: 1,
+        };
+
+        let result = solana_client.get_block(100).await;
+        assert!(result.is_err());
     }
 }

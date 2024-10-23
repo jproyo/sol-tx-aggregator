@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 
 /// Represents a transaction on the Solana blockchain.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq)]
 pub struct Transaction {
     /// Unique identifier for the transaction
     pub id: String,
@@ -21,8 +21,14 @@ pub struct Transaction {
     pub timestamp: i64,
 }
 
+impl PartialEq for Transaction {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
 /// Represents an account on the Solana blockchain.
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq)]
 pub struct Account {
     /// Public key of the account
     pub address: Pubkey,
@@ -30,6 +36,12 @@ pub struct Account {
     pub balance: u64,
     /// The last slot in which this account was updated
     pub last_slot_updated: u64,
+}
+
+impl PartialEq for Account {
+    fn eq(&self, other: &Self) -> bool {
+        self.address == other.address
+    }
 }
 
 /// Trait for data storage operations.
