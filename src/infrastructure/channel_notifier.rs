@@ -2,8 +2,8 @@ use crate::domain::{
     errors::NotifierError,
     models::{Account, DataStorage, Notifier, Transaction},
 };
-use std::marker::PhantomData;
-use tokio::sync::{broadcast, mpsc};
+use std::{marker::PhantomData, sync::Arc};
+use tokio::sync::mpsc;
 
 use super::shutdown::Shutdown;
 
@@ -17,10 +17,10 @@ pub struct ChannelNotifier<D, S> {
 
 impl<D, S> ChannelNotifier<D, S>
 where
-    D: DataStorage + Send + Sync + 'static + Clone,
+    D: DataStorage + Send + Sync + 'static,
     S: Shutdown + Send + Sync + 'static + Clone,
 {
-    pub fn new(database: D, shutdown: S) -> Self {
+    pub fn new(database: Arc<D>, shutdown: S) -> Self {
         let (tx_transactions, rx_transactions) = mpsc::channel(100);
         let (tx_accounts, rx_accounts) = mpsc::channel(100);
 
@@ -36,9 +36,12 @@ where
     }
 }
 
-fn listen_for_accounts<D, S>(mut rx_accounts: mpsc::Receiver<Account>, database: D, shutdown: S)
-where
-    D: DataStorage + Send + Sync + 'static + Clone,
+fn listen_for_accounts<D, S>(
+    mut rx_accounts: mpsc::Receiver<Account>,
+    database: Arc<D>,
+    shutdown: S,
+) where
+    D: DataStorage + Send + Sync + 'static,
     S: Shutdown + Send + Sync + 'static,
 {
     tokio::spawn(async move {
@@ -59,10 +62,10 @@ where
 
 fn listen_for_transactions<D, S>(
     mut rx_transactions: mpsc::Receiver<Transaction>,
-    database: D,
+    database: Arc<D>,
     shutdown: S,
 ) where
-    D: DataStorage + Send + Sync + 'static + Clone,
+    D: DataStorage + Send + Sync + 'static,
     S: Shutdown + Send + Sync + 'static,
 {
     tokio::spawn(async move {

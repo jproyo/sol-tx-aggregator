@@ -32,6 +32,10 @@ pub enum DataStorageError {
     FailedToStoreAccount,
     #[error("Invalid date on transaction {0}")]
     InvalidDate(String),
+    #[error("Transaction not found {0}")]
+    TransactionNotFound(String),
+    #[error("Account not found {0}")]
+    AccountNotFound(String),
 }
 
 #[derive(Error, Debug)]

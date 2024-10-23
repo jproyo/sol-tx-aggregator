@@ -17,12 +17,33 @@ pub struct Transaction {
 pub struct Account {
     pub address: Pubkey,
     pub balance: u64,
+    pub last_slot_updated: u64,
 }
 
 #[async_trait::async_trait]
 pub trait DataStorage {
     async fn store_transaction(&self, transaction: Transaction) -> Result<(), DataStorageError>;
     async fn store_account(&self, account: Account) -> Result<(), DataStorageError>;
+    async fn get_transactions(&self) -> Result<Vec<Transaction>, DataStorageError>;
+    async fn get_accounts(&self) -> Result<Vec<Account>, DataStorageError>;
+    async fn get_transaction(&self, id: String) -> Result<Transaction, DataStorageError>;
+    async fn get_account(&self, address: Pubkey) -> Result<Account, DataStorageError>;
+    async fn get_transactions_by_sender(
+        &self,
+        sender: Pubkey,
+    ) -> Result<Vec<Transaction>, DataStorageError>;
+    async fn get_transactions_by_receiver(
+        &self,
+        receiver: Pubkey,
+    ) -> Result<Vec<Transaction>, DataStorageError>;
+    async fn get_transactions_by_slot(
+        &self,
+        slot: u64,
+    ) -> Result<Vec<Transaction>, DataStorageError>;
+    async fn get_transactions_by_date(
+        &self,
+        date: String,
+    ) -> Result<Vec<Transaction>, DataStorageError>;
 }
 
 #[async_trait::async_trait]

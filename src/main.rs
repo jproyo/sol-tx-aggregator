@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use sol_tx_aggregator::application::app;
-use sol_tx_aggregator::application::Aggregator;
+use sol_tx_aggregator::application::app::Application;
 use sol_tx_aggregator::service;
 use tokio::signal;
 use tokio::sync::broadcast;
@@ -17,15 +19,20 @@ async fn main() -> Result<()> {
     let (shutdown_sender, _) = broadcast::channel(1);
 
     // Start the aggregator
-    let aggregator = app(endpoint, shutdown_sender.clone())?;
+    let app = Arc::new(app::App::new());
+    let shutdown_sender_aggregator = shutdown_sender.clone();
+    let app_clone = app.clone();
     let aggregator_handle = tokio::spawn(async move {
-        if let Err(e) = aggregator.run().await {
+        if let Err(e) = app_clone
+            .run_aggregator(endpoint, shutdown_sender_aggregator)
+            .await
+        {
             tracing::error!("Aggregator error: {:?}", e);
         }
     });
 
     // Start the API server
-    let server_handle = tokio::spawn(service::api::start_server(shutdown_sender.clone()));
+    let server_handle = tokio::spawn(service::api::start_server(shutdown_sender.clone(), app));
 
     // Wait for shutdown signal
     tokio::select! {

@@ -170,6 +170,7 @@ where
                                             instruction,
                                             &account_keys,
                                             lamports,
+                                            slot,
                                         )
                                         .await?;
                                     }
@@ -177,7 +178,7 @@ where
                                 }
                             }
                         }
-                        Self::update_account_balances(notifier.clone(), &account_keys, meta)
+                        Self::update_account_balances(notifier.clone(), &account_keys, meta, slot)
                             .await?;
                     }
                 }
@@ -192,11 +193,13 @@ where
         instruction: &CompiledInstruction,
         account_keys: &[Pubkey],
         lamports: u64,
+        slot: u64,
     ) -> Result<(), AggregatorError> {
         let new_account = account_keys[instruction.accounts[1] as usize];
         let account = Account {
             address: new_account,
             balance: lamports,
+            last_slot_updated: slot,
         };
 
         notifier.notify_account(account).await?;
@@ -208,6 +211,7 @@ where
         notifier: N,
         account_keys: &[Pubkey],
         meta: &UiTransactionStatusMeta,
+        slot: u64,
     ) -> Result<(), AggregatorError> {
         for (idx, (pre_balance, post_balance)) in meta
             .pre_balances
@@ -220,6 +224,7 @@ where
                 let account = Account {
                     address: account_key,
                     balance: *post_balance,
+                    last_slot_updated: slot,
                 };
 
                 notifier.notify_account(account).await?;
